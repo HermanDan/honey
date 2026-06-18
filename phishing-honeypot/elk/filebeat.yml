@@ -1,0 +1,52 @@
+filebeat.inputs:
+
+  # ── Flask phishing decoy logs ──────────────────────────────
+  - type: log
+    enabled: true
+    paths:
+      - /logs/flask/*.json
+    json.keys_under_root: true
+    json.add_error_key: true
+    fields:
+      log_source: flask
+      honeypot_component: phishing_decoy
+    fields_under_root: true
+    tags: ["phishing", "flask"]
+
+  # ── Cowrie SSH honeypot logs ───────────────────────────────
+  - type: log
+    enabled: true
+    paths:
+      - /logs/cowrie/cowrie.json
+    json.keys_under_root: true
+    json.add_error_key: true
+    fields:
+      log_source: cowrie
+      honeypot_component: ssh_honeypot
+    fields_under_root: true
+    tags: ["ssh", "cowrie"]
+
+# ── Output to Elasticsearch ────────────────────────────────
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  indices:
+    - index: "honeypot-flask-%{+yyyy.MM.dd}"
+      when.equals:
+        log_source: "flask"
+    - index: "honeypot-cowrie-%{+yyyy.MM.dd}"
+      when.equals:
+        log_source: "cowrie"
+
+# ── Index template ────────────────────────────────────────
+setup.ilm.enabled: false
+setup.template.enabled: true
+setup.template.name: "honeypot"
+setup.template.pattern: "honeypot-*"
+
+# ── Kibana connection (for dashboard setup) ───────────────
+setup.kibana:
+  host: "http://kibana:5601"
+
+# ── Logging ───────────────────────────────────────────────
+logging.level: info
+logging.to_files: false

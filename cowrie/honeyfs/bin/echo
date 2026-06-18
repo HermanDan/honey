@@ -1,0 +1,7 @@
+#!/bin/sh
+# Simulated /bin/echo for Cowrie honeypot
+
+for arg in "$@"; do
+    printf "%s " "$arg"
+done
+echo

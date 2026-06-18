@@ -1,0 +1,48 @@
+# ── Python ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual environments ─────────────────────────────────────
+cowrie/cowrie-env/
+venv/
+.venv/
+env/
+
+# ── Cowrie runtime & generated ───────────────────────────────
+cowrie/cowrie-env/
+cowrie/var/log/
+cowrie/var/run/
+cowrie/var/lib/
+cowrie/Python-3.10.17.tar.xz
+*.log
+*.log.*
+*.json.20*
+
+# ── Phishing honeypot runtime ────────────────────────────────
+phishing-honeypot/data/
+phishing-honeypot/flask-decoy/logs/
+
+# ── Simulation run outputs ───────────────────────────────────
+sim/runs/*.meta.txt
+sim/reports/
+
+# ── Compiled artifacts ───────────────────────────────────────
+poster.zip
+*.pdf
+
+# ── OS / editor ──────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Secrets / env files ──────────────────────────────────────
+.env
+.env.*
+secrets/

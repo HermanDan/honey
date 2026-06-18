@@ -1,0 +1,4 @@
+TODO:
+- Rotate production SSH keys by June 20
+- Update AWS IAM policies for least privilege
+- Review logs for suspicious SSH logins

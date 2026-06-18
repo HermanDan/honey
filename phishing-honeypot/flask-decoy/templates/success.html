@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CorpNet — Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"/>
+</head>
+<body>
+  <div class="container">
+    <div class="card success-card">
+
+      <div class="logo">
+        <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+          <rect width="40" height="40" rx="8" fill="#0052CC"/>
+          <text x="50%" y="55%" dominant-baseline="middle"
+                text-anchor="middle" fill="white"
+                font-size="18" font-weight="bold">C</text>
+        </svg>
+        <span>CorpNet</span>
+      </div>
+
+      <div class="success-icon">✓</div>
+      <h1>Welcome back, {{ username }}</h1>
+      <p class="subtitle">You have successfully signed in to CorpNet.</p>
+
+      <div class="dashboard-links">
+        <a href="#" class="dash-item">📧 Mail</a>
+        <a href="#" class="dash-item">📁 Files</a>
+        <a href="#" class="dash-item">📅 Calendar</a>
+        <a href="#" class="dash-item">👥 Directory</a>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

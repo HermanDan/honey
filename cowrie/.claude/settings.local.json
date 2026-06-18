@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip3 install:*)",
+      "Bash(/home/dan/school/dataset_honey/honeypot-env/bin/python3:*)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(honeypot-env/bin/python3 -c ':*)",
+      "Bash(pip show:*)",
+      "Bash(python3 -c \"import cowrie\")",
+      "Bash(bin/cowrie status:*)",
+      "Bash(/home/dan/school/honey/cowrie/cowrie-env/bin/python3:*)",
+      "Bash(/home/dan/school/honey/cowrie/cowrie-env/bin/pip install:*)"
+    ]
+  }
+}

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CorpNet — Sign In</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"/>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+
+      <div class="logo">
+        <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+          <rect width="40" height="40" rx="8" fill="#0052CC"/>
+          <text x="50%" y="55%" dominant-baseline="middle"
+                text-anchor="middle" fill="white"
+                font-size="18" font-weight="bold">C</text>
+        </svg>
+        <span>CorpNet</span>
+      </div>
+
+      <h1>Sign in to your account</h1>
+      <p class="subtitle">Enter your corporate credentials to continue</p>
+
+      <form method="POST" action="/" id="loginForm">
+        <div class="field">
+          <label for="username">Email address</label>
+          <input type="text" id="username" name="username"
+                 placeholder="you@corpcorp.com"
+                 autocomplete="username" required/>
+        </div>
+
+        <div class="field">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password"
+                 placeholder="••••••••"
+                 autocomplete="current-password" required/>
+        </div>
+
+        <!-- Hidden fields for behavioral tracking -->
+        <input type="hidden" name="typing_delay" id="typing_delay" value="0"/>
+        <input type="hidden" name="corrections"  id="corrections"  value="0"/>
+
+        <button type="submit" class="btn-primary">Sign in</button>
+      </form>
+
+      <div class="footer-links">
+        <a href="#">Forgot password?</a>
+        <a href="#">Help</a>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // Behavioral tracking — measures typing delay and corrections
+    // These values are sent as hidden fields and logged by Flask
+    let firstKeystroke = null;
+    let corrections = 0;
+    let typingDelay = 0;
+
+    document.querySelectorAll("input[type=text], input[type=password]")
+      .forEach(input => {
+        input.addEventListener("keydown", e => {
+          if (!firstKeystroke) firstKeystroke = Date.now();
+          if (e.key === "Backspace" || e.key === "Delete") corrections++;
+        });
+      });
+
+    document.getElementById("loginForm").addEventListener("submit", () => {
+      typingDelay = firstKeystroke ? Date.now() - firstKeystroke : 0;
+      document.getElementById("typing_delay").value = typingDelay;
+      document.getElementById("corrections").value  = corrections;
+    });
+  </script>
+</body>
+</html>

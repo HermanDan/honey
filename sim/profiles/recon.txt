@@ -1,0 +1,7 @@
+echo SIM_PROFILE=recon
+whoami
+id
+uname -a
+pwd
+ls -la
+cat /etc/passwd

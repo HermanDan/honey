@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CorpNet — Verify your identity</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+  </head>
+  <body>
+    <div class="container">
+      <div class="card">
+        <div class="logo">
+          <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+            <rect width="40" height="40" rx="8" fill="#0052CC" />
+            <text
+              x="50%"
+              y="55%"
+              dominant-baseline="middle"
+              text-anchor="middle"
+              fill="white"
+              font-size="18"
+              font-weight="bold"
+            >
+              C
+            </text>
+          </svg>
+          <span>CorpNet</span>
+        </div>
+
+        <h1>Verify your identity</h1>
+        <p class="subtitle">
+          We sent a 6-digit code to the authenticator app linked to
+          <strong>{{ username }}</strong>
+        </p>
+        {% if error %}
+        <div
+          style="
+            background: #ffebe6;
+            border: 1px solid #ff5630;
+            color: #bf2600;
+            padding: 10px 14px;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+          "
+        >
+          {{ error }}
+        </div>
+        {% endif %}
+        <form method="POST" action="/mfa" id="mfaForm">
+          <div class="field">
+            <label for="mfa_code">Authentication code</label>
+            <input
+              type="text"
+              id="mfa_code"
+              name="mfa_code"
+              placeholder="000000"
+              maxlength="6"
+              inputmode="numeric"
+              pattern="[0-9]{6}"
+              autocomplete="one-time-code"
+              required
+            />
+          </div>
+
+          <button type="submit" class="btn-primary">Verify</button>
+        </form>
+
+        <div class="footer-links">
+          <a href="#">Resend code</a>
+          <a href="#">Use a different method</a>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

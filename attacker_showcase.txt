@@ -1,0 +1,60 @@
+Connect with:
+ssh root@localhost -p 2222
+Go to / folder:
+cd ..
+
+Try following commands:
+adduser testuser
+apt update
+awk '{print $1}' /etc/passwd
+base64 /etc/passwd
+bash -c 'echo bash working'
+busybox
+cat /root/flag.txt
+chmod 777 /tmp/install.sh
+echo 'test:password' | chpasswd
+crontab -l
+curl http://example.com
+dd if=/dev/zero of=/tmp/fill bs=1M count=1
+dig google.com
+du -sh /
+env
+ethtool -i eth0
+find / -name "*.txt"
+finger
+free -h
+fs
+ftpget 127.0.0.1 test.txt
+gcc --version
+git --version
+groups
+ifconfig
+iptables -L
+last
+locate passwd
+ls -la /
+lspci
+nc -zv 127.0.0.1 22
+netstat -tuln
+nohup sleep 10 &
+perl -e 'print "perl works\n";'
+ping -c 1 127.0.0.1
+python --version
+scp /etc/passwd localhost:/tmp/
+service ssh status
+sleep 1
+ssh localhost
+sudo ls
+tar -cvf backup.tar.gz /etc
+echo "logged" | tee /tmp/log.txt
+tftp 127.0.0.1
+ulimit -n
+uname -a
+uniq /etc/passwd
+unzip test.zip
+uptime
+wc -l /etc/passwd
+wget http://example.com
+which ls
+yum update
+

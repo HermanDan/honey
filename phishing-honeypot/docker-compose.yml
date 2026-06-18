@@ -1,0 +1,243 @@
+networks:
+  honeypot-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.18.0.0/24
+  botnet-scanner:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+  botnet-stuffer:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24
+  botnet-human:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/24
+  botnet-apt:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.23.0.0/24
+
+volumes:
+  postgres-data:
+  elasticsearch-data:
+
+services:
+
+  # ── 1. Flask Phishing Decoy ──────────────────────────────
+  flask-decoy:
+    build: ./flask-decoy
+    container_name: flask-decoy
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=honeypot
+      - DB_USER=honeypot
+      - DB_PASSWORD=honeypot123
+      - SESSION_SECRET=changeme-secret-key
+      - SMTP_HOST=mailhog  
+      - SMTP_PORT=1025
+      - MFA_SENDER=security@corpcorp.com
+    volumes:
+      - ./flask-decoy:/app           # live reload during dev
+      - ./data/flask-logs:/app/logs  # logs readable by filebeat
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+    networks:
+      - honeypot-net
+      - botnet-scanner
+      - botnet-stuffer
+      - botnet-human
+      - botnet-apt
+
+  # ── 2. PostgreSQL Credential Store ───────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=honeypot
+      - POSTGRES_USER=honeypot
+      - POSTGRES_PASSWORD=honeypot123
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U honeypot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - honeypot-net
+
+  # ── 3. Bot Manager ────────────────────────────────────────
+
+  # ── 4. Elasticsearch ──────────────────────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    container_name: elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false      # disabled for local dev
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m   # keep RAM usage sane
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+    networks:
+      - honeypot-net
+
+  # ── 5. Kibana ─────────────────────────────────────────────
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.0
+    container_name: kibana
+    restart: unless-stopped
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - honeypot-net
+
+  # ── 6. Filebeat ───────────────────────────────────────────
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.13.0
+    container_name: filebeat
+    restart: unless-stopped
+    user: root                             # needed to read host log files
+    volumes:
+      - ./elk/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./data/flask-logs:/logs/flask:ro   # Flask JSON logs
+      # Cowrie logs from bare host install — read-only mount
+      - /home/dan/school/honey/cowrie/var/log/cowrie:/logs/cowrie:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - honeypot-net
+    command: filebeat -e -strict.perms=false
+   # ──7 MailHog (fake SMTP + web UI) ──────────────────────────
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - honeypot-net
+# ── Bot: Scanner ──────────────────────────────────────────
+  bot-scanner:
+    build: ./bots
+    container_name: bot-scanner
+    restart: unless-stopped
+    environment:
+      - DB_HOST=172.18.0.1
+      - DB_PORT=5432
+      - DB_NAME=honeypot
+      - DB_USER=honeypot
+      - DB_PASSWORD=honeypot123
+      - FLASK_URL=http://172.18.0.1:5000
+      - MAILHOG_API=http://172.18.0.1:8025
+      - COWRIE_HOST=host.docker.internal
+      - COWRIE_PORT=2222
+      - BOT_PROFILE=scanner
+      - BOT_INTERVAL=15
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      botnet-scanner:
+        ipv4_address: 172.20.0.5
+
+  # ── Bot: Credential Stuffer ───────────────────────────────
+  bot-stuffer:
+    build: ./bots
+    container_name: bot-stuffer
+    restart: unless-stopped
+    environment:
+      - DB_HOST=172.18.0.1
+      - DB_PORT=5432
+      - DB_NAME=honeypot
+      - DB_USER=honeypot
+      - DB_PASSWORD=honeypot123
+      - FLASK_URL=http://172.18.0.1:5000
+      - MAILHOG_API=http://172.18.0.1:8025
+      - COWRIE_HOST=host.docker.internal
+      - COWRIE_PORT=2222
+      - BOT_PROFILE=credential_stuffer
+      - BOT_INTERVAL=30
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      botnet-stuffer:
+        ipv4_address: 172.21.0.5
+
+  # ── Bot: Human-like ───────────────────────────────────────
+  bot-human:
+    build: ./bots
+    container_name: bot-human
+    restart: unless-stopped
+    environment:
+      - DB_HOST=172.18.0.1
+      - DB_PORT=5432
+      - DB_NAME=honeypot
+      - DB_USER=honeypot
+      - DB_PASSWORD=honeypot123
+      - FLASK_URL=http://172.18.0.1:5000
+      - MAILHOG_API=http://172.18.0.1:8025
+      - COWRIE_HOST=host.docker.internal
+      - COWRIE_PORT=2222
+      - BOT_PROFILE=human_like
+      - BOT_INTERVAL=120
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      botnet-human:
+        ipv4_address: 172.22.0.5
+
+  # ── Bot: Sophisticated/APT ────────────────────────────────
+  bot-apt:
+    build: ./bots
+    container_name: bot-apt
+    restart: unless-stopped
+    environment:
+      - DB_HOST=172.18.0.1
+      - DB_PORT=5432
+      - DB_NAME=honeypot
+      - DB_USER=honeypot
+      - DB_PASSWORD=honeypot123
+      - FLASK_URL=http://172.18.0.1:5000
+      - MAILHOG_API=http://172.18.0.1:8025
+      - COWRIE_HOST=host.docker.internal
+      - COWRIE_PORT=2222
+      - BOT_PROFILE=sophisticated
+      - BOT_INTERVAL=30
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      botnet-apt:
+        ipv4_address: 172.23.0.5

@@ -1,0 +1,419 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%% chap: implementation %%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\chapter{System Design and Implementation}\label{chapter:chap3}
+
+\section{System Architecture Overview}
+
+The proposed system is a multi-stage phishing honeypot platform designed to
+capture and analyse the complete behavioural lifecycle of a phishing attack,
+from initial credential harvesting through post-compromise SSH activity. The
+architecture consists of six integrated components deployed on a single Ubuntu
+host: a Flask-based phishing decoy, a Cowrie SSH honeypot, a PostgreSQL
+credential store, an automated bot simulation framework, an ELK-based log
+pipeline, and a machine learning classification module.
+
+The central design principle is the use of a shared \texttt{session\_id}
+identifier that links events across all stages of an attack. When a simulated
+victim submits credentials to the phishing decoy, a session identifier is
+generated and persisted to PostgreSQL. The attacker bot subsequently reads this
+identifier and uses it when initiating an SSH session against Cowrie, ensuring
+that phishing events and post-compromise SSH events can be correlated as a
+single end-to-end behavioural record. This cross-stage linkage is a key
+contribution of the proposed system, as existing phishing honeypots typically
+capture only the credential submission stage without tracking subsequent
+attacker activity \cite{Leita2008Phishing,Bringer2012HoneypotSurvey}.
+
+The system is deployed using Docker Compose, with the exception of Cowrie,
+which runs directly on the host operating system to avoid SSH port conflicts
+inherent to containerised deployments. Each of the four bot profiles is
+assigned to a dedicated Docker network subnet, resulting in genuinely distinct
+source IP addresses per attacker profile. This design ensures that the machine
+learning pipeline must learn from behavioural features rather than trivially
+classifying sessions by IP address alone.
+
+\section{Phishing Decoy Infrastructure}
+
+The phishing decoy is implemented as a three-stage Flask web application
+impersonating a generic corporate login portal named CorpNet. The three stages
+correspond to the principal phases of a modern phishing campaign: credential
+harvesting, multi-factor authentication bypass, and post-authentication
+redirection \cite{Leita2008Phishing}.
+
+\textbf{Stage 1 — Credential harvesting.} The login page presents a realistic
+corporate interface soliciting an email address and password. In addition to
+the submitted credentials, the application captures a set of behavioural
+indicators using client-side JavaScript: the time elapsed between page load and
+form submission (\texttt{time\_on\_page\_ms}), the delay between the first
+keystroke and form submission (\texttt{typing\_delay\_ms}), and the number of
+field corrections made during input (\texttt{field\_corrections}). These three
+features capture timing and interaction patterns that differ significantly
+between human users and automated bots, and are used as primary features in the
+machine learning pipeline described in Section~\ref{sec:ml_design}.
+
+\textbf{Stage 2 — MFA bypass.} Upon credential submission, the application
+generates a six-digit one-time code and delivers it via SMTP to a locally
+deployed MailHog instance, which functions as a contained fake mail server. The
+victim bot retrieves this code programmatically from the MailHog REST API and
+submits it to the MFA endpoint. Real phishing infrastructure routinely
+implements MFA relay to bypass second-factor controls; this stage replicates
+that behaviour in a controlled and ethical manner \cite{Moric2025Honeypots}.
+
+\textbf{Stage 3 — Redirection.} Successful MFA submission redirects the
+simulated victim to a fake dashboard page, completing the session. The
+application logs a \texttt{phishing.session.complete} event containing the full
+session duration and username, which closes the phishing record in PostgreSQL.
+
+All events are written as structured JSON to a log file mounted into the
+Filebeat container, which forwards them to Elasticsearch under the index pattern
+\texttt{honeypot-flask-*}. Events are simultaneously persisted to PostgreSQL
+via the \texttt{phishing\_sessions} table for use by the machine learning
+pipeline.
+
+\section{Cowrie SSH Honeypot}
+\label{sec:cowrie}
+
+The third stage of the attacker lifecycle is post-credential exploitation via
+SSH\@. To capture this stage, the system deploys Cowrie \cite{Song2005HoneyStat},
+a medium-interaction SSH honeypot that emulates a full Unix shell environment
+without exposing a real operating system.
+
+\subsection{Deployment Architecture}
+
+Cowrie runs directly on the host machine rather than inside a Docker container.
+This design decision avoids a port-forwarding conflict: Docker's SSH daemon
+occupies port~22, so placing Cowrie in a container would require a second level
+of port mapping that complicates the bot-to-honeypot connection. Running bare on
+the host allows Cowrie to bind directly to port~2222 and be reached by all four
+bot containers via the host gateway address.
+
+The honeypot is configured in \emph{shell} backend mode, meaning all commands
+are handled by Cowrie's built-in command emulator rather than forwarded to a
+real system. This is appropriate for the thesis scenario because the goal is
+behavioural logging, not high-fidelity command execution. The relevant
+configuration parameters are shown in Table~\ref{tab:cowrie_cfg}.
+
+\begin{table}[h]
+\centering
+\caption{Key Cowrie configuration parameters.}
+\label{tab:cowrie_cfg}
+\begin{tabular}{ll}
+\hline
+\textbf{Parameter} & \textbf{Value} \\
+\hline
+Hostname              & \texttt{CORP-SRV-01} \\
+Backend               & \texttt{shell} \\
+Authentication        & \texttt{UserDB} \\
+Listen port           & 2222 \\
+Idle timeout          & 180 s \\
+Authentication timeout & 120 s \\
+TTY logging           & Enabled \\
+Log format            & Rotating JSON \\
+\hline
+\end{tabular}
+\end{table}
+
+The hostname \texttt{CORP-SRV-01} reinforces the corporate deception established
+by the phishing page. An attacker who steals credentials from what appears to be
+a corporate login portal and subsequently reaches a server by this name is more
+likely to proceed with reconnaissance, increasing the volume and quality of
+captured behaviour \cite{Holz2006AttackPatterns}.
+
+\subsection{Credential Configuration}
+
+Authentication is controlled by \texttt{userdb.txt}, which lists every
+username–password pair that Cowrie will accept. The file contains nine entries:
+the five planted corporate identities that are also seeded in the Flask decoy
+and PostgreSQL (\texttt{john.mitchell}, \texttt{sarah.chen}, \texttt{admin},
+\texttt{it.support}, \texttt{j.smith}), two common default credentials
+(\texttt{root/123456}, \texttt{admin/admin}), and a wildcard entry that accepts
+any remaining credential pair. The wildcard ensures that scanners probing with
+arbitrary credentials are also admitted, generating SSH session data rather than
+being silently rejected at the authentication stage.
+
+\subsection{Fake Filesystem}
+
+Cowrie's \texttt{honeyfs/} directory overlays a set of files onto the emulated
+filesystem designed to elicit further attacker interaction. Three files are of
+particular interest:
+
+\begin{itemize}
+    \item \textbf{\texttt{/etc/passwd}} — Contains eleven entries including the
+    five planted corporate users with realistic home directories and login
+    shells. This file is the first target of account-discovery commands such as
+    \texttt{cat /etc/passwd}.
+
+    \item \textbf{\texttt{/etc/secrets.txt}} — A simulated internal
+    configuration file containing fictitious database credentials, AWS access
+    keys, and SMTP passwords. Planting credentials of this kind follows the
+    deception principle of breadcrumbing \cite{Leita2008Phishing}: each secret
+    gives the attacker a reason to continue and attempt lateral movement,
+    extending the session duration and command count.
+
+    \item \textbf{\texttt{/home/john.mitchell/.bash\_history}} — A
+    pre-populated command history including SSH connections to internal
+    addresses and database access commands. These entries simulate artefacts
+    left by a legitimate administrator and encourage sophisticated attackers to
+    investigate internal network topology.
+\end{itemize}
+
+\subsection{Logging}
+
+Cowrie produces structured JSON logs at
+\texttt{var/log/cowrie/cowrie.json}. Each event records the event type
+(\texttt{cowrie.login.success}, \texttt{cowrie.command.input},
+\texttt{cowrie.session.closed}), the source IP, session identifier, timestamp,
+and — for command events — the exact string entered by the attacker. TTY
+logging is also enabled, producing a full terminal replay of every session.
+The \texttt{session\_id} written into SSH sessions by the attacker bot is the
+same UUID generated during the Flask phishing phase, enabling cross-stage
+correlation described in Section~\ref{sec:ml_design}.
+
+\section{Attacker Bot Simulation}
+\label{sec:bots}
+
+Evaluating a honeypot in a controlled laboratory environment requires a source
+of realistic attacker traffic. Four automated bot profiles are implemented in
+\texttt{bot\_manager.py}, each parameterised from real-world data and running
+in its own isolated Docker container and network subnet.
+
+\subsection{Justification for Synthetic Traffic}
+
+The use of synthetic traffic in honeypot research is established practice when
+live exposure is not feasible \cite{Kreibich2005Replay,Alata2006Honeynet}. The
+behavioural parameters of each profile are derived from two authoritative
+sources:
+
+\begin{enumerate}
+    \item \textbf{CyberLab Honeynet Dataset} \cite{Alata2006Honeynet} — 293
+    real SSH honeypot sessions from which login timing distributions, session
+    duration medians, and login attempt counts are extracted.
+    \item \textbf{MITRE ATT\&CK} — Techniques T1078 (Valid Accounts), T1059
+    (Command and Scripting Interpreter), T1087 (Account Discovery), and T1005
+    (Data from Local System) are used to select the command sequences executed
+    by each profile.
+\end{enumerate}
+
+This dual grounding means that while the traffic is synthetic, the distributions
+it samples from are empirically validated.
+
+\subsection{Two-Phase Attack Model}
+
+Each bot cycle executes two phases that mirror the complete attacker lifecycle:
+
+\begin{description}
+    \item[Phase 1 — Victim bot] Simulates a user who receives a phishing email,
+    visits the Flask decoy, submits credentials, and completes MFA\@. The bot
+    reads the MFA code from the MailHog API, replicating the account takeover
+    step without any external network dependency.
+
+    \item[Phase 2 — Attacker bot] After a profile-specific delay, reads the
+    stolen credentials from PostgreSQL and opens an SSH connection to Cowrie on
+    port~2222. It then executes the command sequence defined for its profile.
+\end{description}
+
+Both phases share the same \texttt{session\_id} generated at the start of
+Phase~1. This identifier is written into \texttt{phishing\_sessions},
+\texttt{ssh\_sessions}, and \texttt{ml\_features}, enabling every event in the
+attacker lifecycle to be traced to a single origin.
+
+\subsection{Profile Definitions}
+
+The four profiles and their key parameters are summarised in
+Table~\ref{tab:bot_profiles}.
+
+\begin{table}[h]
+\centering
+\caption{Attacker bot profile parameters derived from CyberLab distributions and MITRE ATT\&CK.}
+\label{tab:bot_profiles}
+\begin{tabular}{lllll}
+\hline
+\textbf{Profile} & \textbf{Login delay} & \textbf{MFA delay} & \textbf{Commands} & \textbf{MITRE} \\
+\hline
+Scanner            & 0.1–0.5 s  & 0.1–0.3 s   & 4  & T1087 \\
+Credential stuffer & 0.5–2.0 s  & 0.2–0.5 s   & 4  & T1110 \\
+Human-like         & 3.0–12.0 s & 8.0–30.0 s  & 11 & T1059, T1005 \\
+Sophisticated      & 8.0–25.0 s & 15.0–45.0 s & 16 & T1078, T1087, T1005 \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{Scanner.}
+Parameterised from 34 CyberLab sessions with a median duration of 25.4~s.
+The scanner submits all five credential pairs in rapid succession, uses
+non-browser user agents (\texttt{python-requests}, \texttt{curl},
+\texttt{Nikto}), and executes four basic account-discovery commands with
+inter-command delays of 0.1–0.5~s. This profile represents automated
+vulnerability scanning rather than targeted intrusion
+\cite{Bringer2012HoneypotSurvey}.
+
+\paragraph{Credential stuffer.}
+Parameterised from 4 CyberLab sessions with a mean of 23.75 login attempts.
+It submits ten credential pairs at 0.5–2.0~s per field, consistent with
+list-based brute-force tooling. The command set targets privilege escalation
+indicators (\texttt{cat /etc/shadow}, \texttt{ls /home})
+\cite{Bailey2009Botnets}.
+
+\paragraph{Human-like.}
+Parameterised from 148 CyberLab sessions with a median session duration of
+52.1~s. Login delays of 3–12~s and MFA delays of 8–30~s reflect the timing of
+a human operator reading and typing. The command sequence of eleven entries
+includes network enumeration and data collection, consistent with MITRE ATT\&CK
+T1059 and T1005 \cite{Holz2006AttackPatterns}.
+
+\paragraph{Sophisticated.}
+Represents an Advanced Persistent Threat actor. Login delays of 8–25~s and
+MFA delays of 15–45~s indicate deliberate, unhurried operation. The
+sixteen-command sequence includes persistent access investigation
+(\texttt{crontab -l}), broad configuration file discovery, and lateral movement
+indicators. The profile executes a single login attempt and uses only a
+legitimate browser user agent, minimising the automated footprint visible to
+anomaly detectors \cite{Freiling2010Evasion}.
+
+\subsection{Network Isolation}
+
+Each bot runs in a dedicated Docker subnet (Table~\ref{tab:bot_subnets}),
+ensuring that the source IP address recorded in every session genuinely differs
+per profile. This prevents the classifier from memorising IP prefixes rather
+than learning from behavioural features \cite{Rajab2007Botnet}.
+
+\begin{table}[h]
+\centering
+\caption{Docker subnet assignments for bot isolation.}
+\label{tab:bot_subnets}
+\begin{tabular}{lll}
+\hline
+\textbf{Profile} & \textbf{Subnet} & \textbf{Bot IP} \\
+\hline
+Scanner            & \texttt{172.20.0.0/24} & \texttt{172.20.0.5} \\
+Credential stuffer & \texttt{172.21.0.0/24} & \texttt{172.21.0.5} \\
+Human-like         & \texttt{172.22.0.0/24} & \texttt{172.22.0.5} \\
+Sophisticated      & \texttt{172.23.0.0/24} & \texttt{172.23.0.5} \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{Log Collection and Visualisation}
+\label{sec:elk}
+
+Centralised log aggregation is implemented using the Elastic Stack
+\cite{Holz2006AttackPatterns}: Filebeat ships logs from both honeypot
+components to Elasticsearch, where they are indexed and made available for
+analysis in Kibana.
+
+\subsection{Filebeat Configuration}
+
+Filebeat is deployed as a Docker service with bind-mount access to both log
+directories. It is configured with two inputs and a single Elasticsearch
+output, as shown in Table~\ref{tab:filebeat}.
+
+\begin{table}[h]
+\centering
+\caption{Filebeat input and index configuration.}
+\label{tab:filebeat}
+\begin{tabular}{lll}
+\hline
+\textbf{Source} & \textbf{Log path} & \textbf{Elasticsearch index} \\
+\hline
+Flask phishing decoy & \texttt{/logs/flask/*.json}       & \texttt{honeypot-flask-\{date\}} \\
+Cowrie SSH honeypot  & \texttt{/logs/cowrie/cowrie.json} & \texttt{honeypot-cowrie-\{date\}} \\
+\hline
+\end{tabular}
+\end{table}
+
+Both inputs use \texttt{json.keys\_under\_root: true}, which promotes all JSON
+fields to the top level of the Elasticsearch document, simplifying Kibana query
+construction. Each document is tagged with a \texttt{log\_source} field and a
+\texttt{honeypot\_component} field, enabling per-component filtering within a
+single Kibana data view. Index lifecycle management is disabled and a custom
+index template matching \texttt{honeypot-*} is applied to ensure consistent
+field mappings across both index families.
+
+\subsection{Elasticsearch and Kibana}
+
+Elasticsearch~8.13.0 runs as a single-node cluster on port~9200 within the
+\texttt{honeypot-net} Docker network. The single-node configuration is
+sufficient for the thesis scale and eliminates coordination overhead.
+
+Kibana~8.13.0 is accessible on port~5601 and provides real-time dashboards over
+the collected honeypot data. A single data view covering the \texttt{honeypot-*}
+index pattern is configured, allowing analysts to query both Flask and Cowrie
+events in the same interface and correlate them by \texttt{session\_id} or
+timestamp.
+
+\section{Machine Learning Pipeline}
+\label{sec:ml_design}
+
+The ML pipeline classifies each recorded session along two independent axes,
+constituting a multi-label classification problem \cite{Moric2025Honeypots}.
+
+\subsection{Problem Formulation}
+
+Each session in \texttt{ml\_features} is assigned two ground-truth labels set
+by the bot manager at collection time:
+
+\begin{itemize}
+    \item \textbf{Bot type} $\in$ \{scanner, credential\_stuffer, human\_like,
+    sophisticated\} — identifies \emph{who} the attacker is.
+    \item \textbf{Attack stage} $\in$ \{cred\_submission, ssh\_attack\} —
+    identifies \emph{what phase} of the lifecycle the session belongs to.
+\end{itemize}
+
+The two labels are treated independently: one Random Forest classifier is
+trained per label, both using the same feature vector.
+
+\subsection{Feature Engineering}
+
+Six features are extracted for each session, spanning both the phishing and SSH
+stages of the lifecycle (Table~\ref{tab:features}). For credential submission
+rows the SSH features are set to zero; for SSH attack rows the phishing features
+are set to zero. This encoding is deliberate: the zero values are themselves a
+discriminating signal that the classifier can exploit.
+
+\begin{table}[h]
+\centering
+\caption{ML feature set used for both classifiers.}
+\label{tab:features}
+\begin{tabular}{lll}
+\hline
+\textbf{Feature} & \textbf{Stage} & \textbf{Description} \\
+\hline
+\texttt{time\_on\_page\_ms}        & Phishing & Time from page load to form submit \\
+\texttt{typing\_delay\_ms}         & Phishing & Mean delay between keystrokes \\
+\texttt{field\_corrections}        & Phishing & Number of backspace/correction events \\
+\texttt{command\_count}            & SSH      & Total commands executed in session \\
+\texttt{session\_duration\_s}      & SSH      & Total SSH session duration (seconds) \\
+\texttt{inter\_cmd\_delay\_avg\_s} & SSH      & Mean delay between consecutive commands \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Classifier Design}
+
+Both classifiers use Random Forest \cite{Bringer2012HoneypotSurvey} with 200
+estimators, no depth limit, and \texttt{class\_weight=balanced}. Sample weights
+are inversely proportional to class frequency, compensating for the imbalance
+between the large scanner and credential stuffer classes and the smaller
+human-like and sophisticated classes without discarding data.
+
+\subsection{Evaluation Protocol}
+
+Model performance is estimated using 5-fold stratified cross-validation, which
+preserves the class distribution in each fold. Three metrics are reported:
+accuracy, weighted F1, and macro F1. The macro F1 is the primary evaluation
+metric because it treats all classes equally, penalising poor performance on
+minority classes — the most forensically interesting attacker profiles.
+
+\subsection{Baseline Comparison}
+
+To contextualise the results, performance is compared against published
+classification results on the CICIDS2017 dataset \cite{Bringer2012HoneypotSurvey},
+the standard benchmark for network intrusion detection. CICIDS2017 contains
+approximately 500\,000 labelled network flows across 14 attack categories.
+Reported macro F1 scores on CICIDS2017 for Random Forest range from 0.89 to
+0.97 depending on the feature set applied. The honeypot dataset presents a
+harder problem in one respect — four-class behavioural profiling rather than
+binary anomaly detection — and a more tractable one in another: ground truth is
+exact because labels are set by the generating bots rather than inferred by
+analysts.

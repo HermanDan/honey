@@ -1,0 +1,9 @@
+root:0:root
+root:0:123456
+admin:0:admin
+admin:0:password
+john.mitchell:0:Summer2024
+sarah.chen:0:Corporate123
+it.support:0:Helpdesk99
+j.smith:0:Welcome1
+*:0:*
