@@ -5,6 +5,7 @@ A research honeypot platform combining an SSH deception layer (Cowrie) with a ph
 
 
 Architecture
+```
 ┌──────────────────────────────────────────────────┐
 │  Attacker                                        │
 │    SSH ──→ Cowrie (port 2222)   bare-metal       │
@@ -23,6 +24,8 @@ Architecture
           │  │  Bot x4         │  │
           │  └─────────────────┘  │
           └───────────────────────┘
+```
+
 
 | Service        | Port  | Purpose                          |
 |----------------|-------|----------------------------------|
